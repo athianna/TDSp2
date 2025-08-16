@@ -111,8 +111,6 @@ def get_task_breakdown(question: str, file_names: List[str]) -> str:
     )
     model = genai.GenerativeModel("gemini-2.0-flash")
     response = model.generate_content(prompt)
-    with open("task_breakdown.txt", "w", encoding="utf-8") as f:
-        f.write(response.text)
     return response.text
 
 def generate_code(steps: str) -> str:
