@@ -21,3 +21,4 @@ PyMuPDF
 pypdf
 bs4
 playwright
+python-multipart
