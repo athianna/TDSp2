@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import base64, json, re, io, os, traceback
 from pathlib import Path
 import google.generativeai as genai
+from typing import List, Optional
 
 # ========================
 # CONFIGURATION
@@ -110,6 +111,8 @@ def get_task_breakdown(question: str, file_names: List[str]) -> str:
     )
     model = genai.GenerativeModel("gemini-2.0-flash")
     response = model.generate_content(prompt)
+    with open("task_breakdown.txt", "w", encoding="utf-8") as f:
+        f.write(response.text)
     return response.text
 
 def generate_code(steps: str) -> str:
@@ -248,33 +251,40 @@ def is_error_result(result):
 # ========================
 # FASTAPI ENDPOINT
 # ========================
-@app.post("/api")
-async def process_files(files: List[UploadFile] = File(...)):
+@app.post("/api/")
+async def process_files(
+    questions_file: UploadFile = File(..., alias="questions.txt"),  # ✅ match curl field
+    other_files: Optional[List[UploadFile]] = File(None)            # for extra files
+):
     try:
-        uploaded_files = {file.filename: file for file in files}
-        if "questions.txt" not in uploaded_files:
-            return JSONResponse(status_code=400, content={"error": "'questions.txt' is required."})
+        uploaded_files = {"questions.txt": questions_file}
+        if other_files:
+            for file in other_files:
+                uploaded_files[file.filename] = file
 
-        # Preprocess all files (uploaded + local)
+        # Preprocess files (your existing logic)
         processed_files = await preprocess_files(uploaded_files)
 
         # Extract question text
-        question_text = processed_files["questions.txt"] if isinstance(processed_files["questions.txt"], str) else ""
+        question_text = (
+            processed_files["questions.txt"]
+            if isinstance(processed_files["questions.txt"], str)
+            else ""
+        )
         file_names = list(processed_files.keys())
 
         # Generate plan & code
         breakdown = get_task_breakdown(question_text, file_names)
         code = generate_code(breakdown)
-        # Execute code
         result = execute_code(code, processed_files)
         safe_result = make_json_safe(result)
+
         if safe_result["success"]:
             return JSONResponse(content={"result": safe_result["result"]})
         else:
             return JSONResponse(status_code=500, content={
                 "error": safe_result.get("error", "Unknown error"),
             })
-
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
