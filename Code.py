@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File,Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Union
@@ -111,6 +111,8 @@ def get_task_breakdown(question: str, file_names: List[str]) -> str:
     )
     model = genai.GenerativeModel("gemini-2.0-flash")
     response = model.generate_content(prompt)
+    with open("steps.txt", "w", encoding="utf-8") as f:
+        f.write(response.text)
     return response.text
 
 def generate_code(steps: str) -> str:
@@ -145,6 +147,8 @@ f"--- Task Breakdown ---\n{steps}\n\n"
 
     model = genai.GenerativeModel("gemini-2.0-flash-lite")
     code = re.sub(r"^```(?:python)?", "", model.generate_content(prompt).text.strip(), flags=re.IGNORECASE).strip("`")
+    with open ("generated_Code.py", "w") as f:
+        f.write(code)
     return code
 
 def fix_code_with_gemini(code: str, error: str) -> str:
@@ -213,7 +217,9 @@ def execute_code(code: str, files: dict) -> dict:
             traceback_str = traceback.format_exc()
 
             if attempt < MAX_RETRIES - 1:
+                print(f"Attempt {attempt + 1} failed with error: {str(e)}")
                 code = fix_code_with_gemini(code, traceback_str)
+
             else:
                 return {
                     "success": False,
@@ -250,27 +256,34 @@ def is_error_result(result):
 # FASTAPI ENDPOINT
 # ========================
 @app.post("/api/")
-async def process_files(
-    questions_file: UploadFile = File(..., alias="questions.txt"),  # ✅ match curl field
-    other_files: Optional[List[UploadFile]] = File(None)            # for extra files
-):
+async def process_files(request: Request):
     try:
-        uploaded_files = {"questions.txt": questions_file}
-        if other_files:
-            for file in other_files:
-                uploaded_files[file.filename] = file
+        form = await request.form()  # get all form fields
+        uploaded_files: Dict[str, UploadFile] = {}
 
-        # Preprocess files (your existing logic)
+        for key, value in form.items():
+            # This will catch all uploaded files
+            if hasattr(value, "file"):
+                uploaded_files[key] = value
+                print("Added file:", key, value.filename)
+
+        if not uploaded_files:
+            return JSONResponse(status_code=400, content={"error": "No files uploaded."})
+
+        print("file_name:", list(uploaded_files.keys()))  # debug: ['questions.txt', 'sample-sales.csv']
+
+        # Preprocess files
         processed_files = await preprocess_files(uploaded_files)
 
         # Extract question text
         question_text = (
-            processed_files["questions.txt"]
-            if isinstance(processed_files["questions.txt"], str)
+            processed_files.get("questions.txt")
+            if isinstance(processed_files.get("questions.txt"), str)
             else ""
         )
-        file_names = list(processed_files.keys())
 
+        file_names = list(processed_files.keys())
+        print("file_names:", file_names)
         # Generate plan & code
         breakdown = get_task_breakdown(question_text, file_names)
         code = generate_code(breakdown)
