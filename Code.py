@@ -129,14 +129,21 @@ def generate_code(steps: str) -> str:
 "6. Detect column names dynamically — do NOT hardcode unless explicitly stated in the task breakdown.\n" 
 " - If expected columns are missing, search for similar names (case-insensitive, partial match).\n" 
 " - If still unavailable, skip that step and add a note in the result instead of failing.\n" 
-"7. Return JSON-serializable dict only; include { 'error': '<msg>' } if needed.\n\n" 
+"7. **Final Output Format is strict:**\n"
+"   - Return a JSON-serializable dict ONLY.\n"
+"   - Do NOT wrap results under any filename keys.\n"
+"   - Do NOT include metadata, errors, or nested dicts.\n"
+"   - The dict must be FLAT: {\"metric1\": value, \"metric2\": value, ...}\n\n"
+   "- Use them only for understanding the task, never for analysis, and never include them in the result.\n"
 
 f"--- Task Breakdown ---\n{steps}\n\n" 
 """Write a single function:\n 
 ```python\n
     def analyze(files: dict) -> dict:\n
+       # your code goes here\n
+       result={}\n
        # analysis here\n
-       return { 'result': ... }\n
+       return result\n
 ```
     """
 "Ensure robustness to unexpected formats, adapt to available column names, and produce all answers per the task breakdown." 
@@ -164,7 +171,12 @@ def fix_code_with_gemini(code: str, error: str) -> str:
     "- Auto-detect format (CSV, Excel, JSON, Parquet) and try to read; never reject without attempting.\n"
     "- Always catch and log file-specific errors but continue processing others.\n"
     "- Ensure the code runs end-to-end without repeating the same error.\n"
-    "- Return results in a dictionary with either computed answers or structured error messages per file.\n"
+    " **Final Answer Output Format is strict:**\n"
+        "   - Return a JSON-serializable dict ONLY.\n"
+        "   - Do NOT wrap results under any filename keys.\n"
+        "   - Do NOT include metadata, errors, or nested dicts.\n"
+        "   - The dict must be FLAT: {\"metric1\": value, \"metric2\": value, ...}\n\n"
+        "- Use them only for understanding the task, never for analysis, and never include them in the result.\n"
     "- Use only these libraries: {', '.join(SAFE_LIBS)}.\n"
     "- Output only the fully corrected Python code (no explanations, no markdown)."
 )
@@ -264,10 +276,15 @@ async def process_files(request: Request):
         if not uploaded_files:
             return JSONResponse(status_code=400, content={"error": "No files uploaded."})
 
-        print("file_names:", list(uploaded_files.keys()))
+        print("files:", list(uploaded_files.keys()))
 
         # Preprocess files
         processed_files = await preprocess_files(uploaded_files)
+        analysis_files = {
+                name: content
+                for name, content in processed_files.items()
+                if not name.lower().endswith((".txt", ".md"))
+            }
 
         # Extract question text
         question_text = (
@@ -280,11 +297,10 @@ async def process_files(request: Request):
         # Generate plan & code
         breakdown = get_task_breakdown(question_text, file_names)
         code = generate_code(breakdown)
-        result = execute_code(code, processed_files)
+        result = execute_code(code, analysis_files)
         safe_result = make_json_safe(result)
-
         if safe_result["success"]:
-            return JSONResponse(content={"result": safe_result["result"]})
+            return JSONResponse(content=safe_result["result"])
         else:
             return JSONResponse(status_code=500, content={
                 "error": safe_result.get("error", "Unknown error"),
